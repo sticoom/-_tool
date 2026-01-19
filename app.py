@@ -2,64 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-# ==========================================
-# 1. 页面基础配置 (必须是第一个 st 命令)
-# ==========================================
-st.set_page_config(page_title="外协调拨系统(倩文)", layout="wide", page_icon="🔒")
-
-# ==========================================
-# ==========================================
-# 2. 核心隐私保护代码 (核弹级隐藏)
-# ==========================================
-hide_st_style = """
-    <style>
-    /* 1. 隐藏顶部的汉堡菜单 */
-    #MainMenu {visibility: hidden;}
-    
-    /* 2. 隐藏页脚 "Made with Streamlit" */
-    footer {visibility: hidden;}
-    
-    /* 3. 隐藏顶部的彩色装饰条 */
-    header {visibility: hidden;}
-    
-    /* 4. 暴力隐藏右下角的 Streamlit 工具栏 */
-    /* 针对新版 Shadow DOM 的隐藏 */
-    [data-testid="stToolbar"] {
-        visibility: hidden !important;
-        display: none !important;
-        height: 0px !important;
-    }
-    
-    /* 针对旧版结构的隐藏 */
-    .stApp > header {
-        visibility: hidden !important;
-        display: none !important;
-    }
-    
-    /* 隐藏状态组件 */
-    div[data-testid="stStatusWidget"] {
-        visibility: hidden !important;
-        display: none !important;
-    }
-    
-    /* 隐藏头像框 */
-    [data-testid="stDecoration"] {
-        visibility: hidden !important;
-        display: none !important;
-    }
-
-    /* 5. 调整主区域上边距，防止顶部留白 */
-    .block-container {
-        padding-top: 1rem !important;
-    }
-    </style>
-    """
-st.markdown(hide_st_style, unsafe_allow_html=True)
-
-# ==========================================
-# 3. 主程序标题
-# ==========================================
+# --- 页面设置 ---
+st.set_page_config(page_title="外协调拨系统(侦探版)", layout="wide", page_icon="🕵️‍♂️")
 st.title("🏭 外协/云仓库存 -> 直接调拨单生成器")
+
 
 # --- 辅助函数：自动寻找表头 ---
 def load_and_find_header(file_obj):
@@ -111,15 +57,18 @@ def smart_select_columns(df):
     selected_cols = {}
     
     # --- A. 寻找 FNSKU (优先匹配 FNSKU, fnsku) ---
+    # 找所有包含 FNSKU 的列
     fnsku_candidates = [c for c in all_cols if 'FNSKU' in c.upper()]
     if fnsku_candidates:
-        selected_cols['FNSKU'] = fnsku_candidates[0]
+        selected_cols['FNSKU'] = fnsku_candidates[0] # 取第一个匹配的
     else:
         return None, f"❌ 未找到 FNSKU 列。现有列名：{all_cols}"
 
     # --- B. 寻找 SKU (不能包含 FNSKU) ---
+    # 找包含 SKU 但不包含 FNSKU 的列
     sku_candidates = [c for c in all_cols if 'SKU' in c.upper() and 'FNSKU' not in c.upper()]
     if sku_candidates:
+        # 如果有多个 SKU 列，通常取第一个，或者取列名最短的（'SKU' 优于 '商品SKU'）
         sku_candidates.sort(key=len)
         selected_cols['SKU'] = sku_candidates[0]
     else:
@@ -133,10 +82,12 @@ def smart_select_columns(df):
         return None, "❌ 未找到 仓库 列。"
 
     # --- D. 寻找 库存 (最关键!!!) ---
+    # 优先级：包含'可用' > 包含'数量' > 包含'库存' (且不是库存主体)
     stock_candidates_priority = [c for c in all_cols if '可用' in c]
     if stock_candidates_priority:
         selected_cols['Stock'] = stock_candidates_priority[0]
     else:
+        # 如果没有可用，找其他带库存的，但排除 "主体"
         stock_others = [c for c in all_cols if '库存' in c and '主体' not in c]
         if stock_others:
             selected_cols['Stock'] = stock_others[0]
@@ -148,7 +99,7 @@ def smart_select_columns(df):
     if zone_candidates:
         selected_cols['Zone'] = zone_candidates[0]
     else:
-        selected_cols['Zone'] = None 
+        selected_cols['Zone'] = None # 允许为空
 
     # --- 构建干净的 DataFrame ---
     df_clean = pd.DataFrame()
@@ -173,7 +124,7 @@ def process_data(df_demand, inv_file, plan_file=None):
     df_inv_raw, msg = load_and_find_header(inv_file)
     if df_inv_raw is None: return None, msg, None
 
-    # 2. 智能选列
+    # 2. 智能选列 (解决重复列问题)
     df_inv, col_msg = smart_select_columns(df_inv_raw)
     if df_inv is None: return None, col_msg, None
     
@@ -184,10 +135,11 @@ def process_data(df_demand, inv_file, plan_file=None):
     df_inv['Zone'] = df_inv['Zone'].astype(str).str.strip()
     df_inv['Stock'] = pd.to_numeric(df_inv['Stock'], errors='coerce').fillna(0)
 
-    # 4. 筛选外协
+    # 4. 筛选外协 (关键点：这里如果筛空了，也会报错)
     filter_mask = df_inv['Warehouse'].str.contains("外协|天源", na=False)
     df_inv_target = df_inv[filter_mask].copy()
     
+    # --- 调试数据返回 ---
     debug_info = {
         "raw_cols": list(df_inv_raw.columns),
         "clean_head": df_inv.head(3),
@@ -202,6 +154,7 @@ def process_data(df_demand, inv_file, plan_file=None):
     if plan_file is not None:
         df_plan_raw, _ = load_and_find_header(plan_file)
         if df_plan_raw is not None:
+            # 简单的计划表清洗
             df_plan_raw.columns = [str(c).strip() for c in df_plan_raw.columns]
             p_map = {}
             for c in df_plan_raw.columns:
@@ -210,10 +163,12 @@ def process_data(df_demand, inv_file, plan_file=None):
                 elif 'SKU' in c.upper(): p_map[c] = 'SKU'
             df_plan_raw.rename(columns=p_map, inplace=True)
             
+            # 去重列
             df_plan_raw = df_plan_raw.loc[:, ~df_plan_raw.columns.duplicated()]
 
             if 'SKU' in df_plan_raw and 'PlanQty' in df_plan_raw:
                 df_plan_raw['SKU'] = df_plan_raw['SKU'].astype(str).str.strip()
+                # 兼容 FNSKU 可能没有的情况
                 if 'FNSKU' in df_plan_raw:
                      df_plan_raw['FNSKU'] = df_plan_raw['FNSKU'].astype(str).str.strip()
                 else:
@@ -245,6 +200,7 @@ def process_data(df_demand, inv_file, plan_file=None):
         
         if sku == 'nan' or qty_needed <= 0: continue
 
+        # A. 目标匹配
         matches = df_inv_target[
             (df_inv_target['SKU'] == sku) & 
             (df_inv_target['FNSKU'] == target_fnsku)
@@ -253,7 +209,7 @@ def process_data(df_demand, inv_file, plan_file=None):
         for _, inv_row in matches.iterrows():
             if qty_needed <= 0: break
             avail = inv_row['Stock']
-            if avail <= 0: continue 
+            if avail <= 0: continue # 严格小于等于0跳过
             
             take = min(qty_needed, avail)
             results.append({
@@ -262,6 +218,7 @@ def process_data(df_demand, inv_file, plan_file=None):
             })
             qty_needed -= take
             
+        # B. 补位匹配
         if qty_needed > 0:
             subs = df_inv_target[
                 (df_inv_target['SKU'] == sku) & 
@@ -319,9 +276,18 @@ if run:
     if inv_file and not edited_df.empty:
         with st.spinner("正在分析数据..."):
             try:
-                res, msgs= process_data(edited_df, inv_file, plan_file)
+                res, msgs, debug = process_data(edited_df, inv_file, plan_file)
                 
-               
+                # --- 🕵️‍♂️ 数据侦探区域 ---
+                if debug:
+                    with st.expander("🕵️‍♂️ 数据诊断报告 (点我查看程序读到了什么)", expanded=False):
+                        st.write("1. **列名识别情况**：")
+                        st.text(debug['col_msg'])
+                        
+                        st.write(f"2. **筛选外协后行数**：{debug['target_count']} 行")
+                        
+                        st.write("3. **清洗后库存数据前5行 (请检查Stock列是否为0)**：")
+                        st.dataframe(debug['clean_head'])
 
                 if res is not None:
                     if msgs:
